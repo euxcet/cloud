@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.Text;
@@ -7,25 +7,28 @@ using System.Net.Sockets;
 using System.Threading;
 
 public class Mail {
-    public int flag;
+
+    public enum IDENTIFIER {
+        NONE, GET_IMAGE_DATA, GET_CURSOR
+    };
+
+    public IDENTIFIER identifier;
     public int width;
     public int height;
     public int x;
     public int y;
     public float scale;
     public byte[] data;
+    public float dx;
+    public float dy;
 
     public Mail() {
-        flag = 0;
-        width = 0;
-        height = 0;
-        scale = 0.0f;
+        identifier = NONE;
     }
 }
 
 public class Net : MonoBehaviour
 {
-
     private Socket server;
     private TcpListener listener;
     private TcpClient clientSocket;
@@ -36,12 +39,15 @@ public class Net : MonoBehaviour
     private const int BUFFER_SIZE = 2048;
     private const int NAME_SIZE = 20;
     private const int FORMAT_SIZE = 5;
-    private int IMAGE_WIDTH = 800;
-    private int IMAGE_HEIGHT = 800;
+    private const int CORRECTION_BYTE = 100;
+
+    private const int IMAGE_WIDTH = 800;
+    private const int IMAGE_HEIGHT = 800;
+
+
 
     // Use this for initialization
-    void Start()
-    {
+    void Start() {
         IPAddress address = IPAddress.Parse("0.0.0.0");
         int port = 2000;
         listener = new TcpListener(address, port);
@@ -52,8 +58,7 @@ public class Net : MonoBehaviour
         mail = new Mail();
     }
 
-    void WaitSocket()
-    {
+    void WaitSocket() {
         if (clientSocket != null)
             clientSocket.Close();
         clientSocket = listener.AcceptTcpClient();
@@ -79,6 +84,10 @@ public class Net : MonoBehaviour
         return data;
     }
 
+    void SendBytes(byte[] data, int size) {
+        clientSocket.Send(data, size, SocketFlags.None);
+    }
+
     string GetString(int size) {
         byte[] data = GetBytes(size);
         int length = StripLength(data, size);
@@ -90,178 +99,125 @@ public class Net : MonoBehaviour
         return System.BitConverter.ToUInt16(data, 0);
     }
 
+    void SendByte(byte data) {
+        clientSocket.Send(BitConverter.GetBytes(data), 1, SocketFlags.None);
+    }
+
     int GetInt() {
         byte[] data = GetBytes(4);
         return (int)System.BitConverter.ToUInt32(data, 0);
     }
 
-    double GetDouble()
-    {
+    void SendInt(int data) {
+        clientSocket.Send(BitConverter.GetBytes(data), 4, SocketFlags.None);
+    }
+
+    double GetDouble() {
         byte[] data = GetBytes(8);
         return System.BitConverter.ToDouble(data, 0);
     }
 
+    void SendDouble(double data) {
+        clientSocket.Send(BitConverter.GetBytes(data), 8, SocketFlags.None);
+    }
+
     int StripLength(byte[] data, int size) {
-        while (size > 0 && data[size - 1] == 0) {
+        while (size > 0 && data[size - 1] == 0)
             size--;
-        }
         return size;
     }
 
     void GetImageData() {
         string imageName = GetString(NAME_SIZE);
-        Debug.Log(imageName);
         string format = GetString(FORMAT_SIZE);
-        Debug.Log(format);
         mail.width = GetShort();
         mail.height = GetShort();
-        Debug.Log(mail.width);
-        Debug.Log(mail.height);
         IMAGE_HEIGHT = IMAGE_WIDTH * mail.height / mail.width;
         int size = GetInt();
-        Debug.Log(size);
         mail.data = GetBytes(size);
-        mail.flag = 1;
-    }
-
-    void GetMode() {
-        byte type = GetByte();
-    }
-
-    void GetEnlarge() {
-        mail.x = GetShort();
-        mail.y = GetShort();
-        mail.flag = 2;
-    }
-
-    void GetEnlargeScale() {
-        mail.scale = (float)GetDouble();
-        mail.flag = 3;
+        mail.flag = GET_IMAGE_DATA;
     }
 
     void GetCursor() {
         mail.x = GetShort();
         mail.y = GetShort();
-        mail.flag = 4;
+        mail.flag = GET_CURSOR;
     }
 
-    void ReceiveMessage()
-    {
+    void ReceiveMessage() {
         while (true) {
             byte identifier = GetByte();
-            Debug.LogError(identifier);
-            switch(identifier) {
-                case 0:
-                    GetImageData();
-                    break;
-                case 1:
-                    GetMode();
-                    break;
-                case 2:
-                    GetEnlarge();
-                    break;
-                case 3:
-                    GetEnlargeScale();
-                    break;
-                case 4:
-                    GetCursor();
-                    break;
-                default:
-                    break;
+            switch (identifier) {
+                case 0: GetImageData(); break;
+                case 4: GetCursor(); break;
+                default: break;
             }
             byte t = GetByte();
-            if (t != 100) {
+            if (t != CORRECTION_BYTE) {
                 Debug.LogError("Correction byte is wrong.");
             }
         }
     }
 
-    void CreateSocket()
-    {
-        Debug.Log("Listening");
+    void CreateSocket() {
         WaitSocket();
-        Debug.Log("Connected");
         ReceiveMessage();
     }
 
-    void OnDestroy()
-    {
-        if (listener != null)
-        {
+    void OnDestroy() {
+        if (listener != null) {
             listener.Stop();
         }
-        if (clientSocket != null)
-        {
+        if (clientSocket != null) {
             clientSocket.Close();
         }
     }
 
+    void InitSprite() {
+        Texture2D texture = new Texture2D(mail.width, mail.height);
+        texture.LoadImage(mail.data);
+
+        Sprite sprite = Sprite.Create(texture,
+            new Rect(0, 0, mail.width, mail.height),
+            new Vector2(0.5f, 0.5f));
+        GameObject.Find("I").GetComponent<SpriteRenderer>().sprite = sprite;
+        GameObject.Find("Imask").GetComponent<SpriteMask>().sprite = sprite;
+        GameObject.Find("Imask").GetComponent<Transform>().localScale = new Vector3(1.0f * IMAGE_WIDTH / mail.width, 1.0f * IMAGE_HEIGHT / mail.height, 1);
+        Resources.UnloadUnusedAssets();
+        mail.identifier = None;
+    }
+
+
+    void MoveCursor() {
+        Texture2D texture = new Texture2D(mail.width, mail.height);
+        texture.LoadImage(mail.data);
+
+        for (int i = -20; i <= 20; i++)
+            for (int j = -20; j <= 20; j++)
+                texture.SetPixel(mail.x + i, mail.y + j, Color.red);
+
+        texture.Apply();
+
+        Sprite newSprite = Sprite.Create(texture,
+            new Rect(0, 0, mail.width, mail.height),
+            new Vector2(0.5f, 0.5f));
+        GameObject.Find("I").GetComponent<SpriteRenderer>().sprite = newSprite;
+        GameObject.Find("Imask").GetComponent<SpriteMask>().sprite = newSprite;
+        mail.identifier = None;
+    }
+
+
     // Update is called once per frame
     void Update()
     {
-        if (mail.flag == 1)
-        {
-            Debug.Log("Init sprite");
-            Texture2D texture = new Texture2D(mail.width, mail.height);
-            texture.LoadImage(mail.data);
-
-
-
-            Sprite sprite = Sprite.Create(texture,
-                new Rect(0, 0, mail.width, mail.height),
-                new Vector2(0.5f, 0.5f));
-            GameObject.Find("I").GetComponent<SpriteRenderer>().sprite = sprite;
-            GameObject.Find("Imask").GetComponent<SpriteMask>().sprite = sprite;
-            GameObject.Find("Imask").GetComponent<Transform>().localScale = new Vector3(1.0f * IMAGE_WIDTH / mail.width, 1.0f * IMAGE_HEIGHT / mail.height, 1);
-            Resources.UnloadUnusedAssets();
-            mail.flag = 0;
-        }
-        else if (mail.flag == 3) {
-            Debug.Log("Enlarge");
-            float x = 1.0f * mail.x * IMAGE_WIDTH / mail.width - IMAGE_WIDTH / 2;
-            float y = 1.0f * mail.y * IMAGE_HEIGHT / mail.height - IMAGE_HEIGHT / 2;
-            /*
-            Debug.Log(mail.x);
-            Debug.Log(mail.y);
-            Debug.Log(mail.width);
-            Debug.Log(mail.height);
-            Debug.Log(IMAGE_WIDTH);
-            Debug.Log(IMAGE_HEIGHT);
-            Debug.Log(x);
-            Debug.Log(y);
-            */
-            Debug.Log(mail.scale);
-            GameObject.Find("I").GetComponent<Transform>().localScale = new Vector3(mail.scale, mail.scale, 1.0f);
-            //GameObject.Find("I").GetComponent<Transform>().localPosition = new Vector3(x - x * mail.scale, y - y * mail.scale, 0f);
-            mail.flag = 0;
-        }
-        else if (mail.flag == 4) {
-            Debug.Log("Move cursor");
-
-            /*
-            GameObject.Find("cursor").GetComponent<Transform>().localPosition = new Vector3(-49.5f + x / 100 , -50.0f + y / 100, -0.1f);
-            */
-            /*
-            Sprite sprite = GameObject.Find("I").GetComponent<SpriteRenderer>().sprite;
-            Texture2D texture = sprite.texture;
-            Debug.Log(texture);
-            */
-
-            Texture2D texture = new Texture2D(mail.width, mail.height);
-            texture.LoadImage(mail.data);
-
-            for (int i = -20; i <= 20; i++)
-                for (int j = -20; j <= 20; j++)
-                    texture.SetPixel(mail.x + i, mail.y + j, Color.red);
-            
-            texture.Apply();
-        
-            Sprite newSprite = Sprite.Create(texture,
-                new Rect(0, 0, mail.width, mail.height),
-                new Vector2(0.5f, 0.5f));
-            GameObject.Find("I").GetComponent<SpriteRenderer>().sprite = newSprite;
-            GameObject.Find("Imask").GetComponent<SpriteMask>().sprite = newSprite;
-            mail.flag = 0;
+        switch (mail.identifier) {
+            case GET_IMAGE_DATA:
+                InitSprite();
+                break;
+            case GET_CURSOR:
+                MoveCursor();
+                break;
+            default: break;
         }
     }
 }
